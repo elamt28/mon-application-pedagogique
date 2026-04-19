@@ -1,4 +1,3 @@
+python-pptx
 streamlit
 google-generativeai
-python-pptx
-requests
