@@ -1,0 +1,123 @@
+import streamlit as st
+import google.generativeai as genai
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from io import BytesIO
+import json
+
+# --- CONFIGURATION CHALKIE IA ---
+st.set_page_config(page_title="Chalkie IA - Expert Pédagogique", layout="wide")
+
+# Récupération de la clé API via les secrets Streamlit ou un fichier local
+try:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+except:
+    st.error("⚠️ Clé API Google manquante. Configurez-la dans vos secrets.")
+
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+def generate_pptx(data):
+    """Génère une présentation PowerPoint certifiée Chalkie IA."""
+    prs = Presentation()
+    
+    # Slide de Titre
+    title_slide_layout = prs.slide_layouts[0]
+    slide = prs.slides.add_slide(title_slide_layout)
+    slide.shapes.title.text = data['titre']
+    slide.placeholders[1].text = f"Niveau : {data['niveau']}\nLieu : {data['lieu']}"
+
+    # Missions
+    for mission in data['missions']:
+        slide_layout = prs.slide_layouts[1]
+        slide = prs.slides.add_slide(slide_layout)
+        slide.shapes.title.text = mission['titre']
+        
+        body_shape = slide.placeholders[1]
+        tf = body_shape.text_frame
+        tf.text = mission['contenu']
+        
+        # Note pour l'illustration (Style Cartoon / Photo)
+        p = tf.add_paragraph()
+        p.text = f"\n[Illustration : {mission['visuel_suggere']}]"
+        p.font.italic = True
+        p.font.size = Pt(14)
+
+    # Synthèse
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = "L'essentiel à retenir"
+    slide.placeholders[1].text = data['synthese']
+
+    binary_output = BytesIO()
+    prs.save(binary_output)
+    return binary_output.getvalue()
+
+# --- INTERFACE UTILISATEUR ---
+st.title("🎓 Chalkie IA : L'application des Apprentis")
+st.write("Bienvenue dans le moteur de création pédagogique du CFA Interpro de Chartres.")
+
+with st.sidebar:
+    st.header("📍 Paramètres Obligatoires")
+    # Respect de l'exigence : Demander le lieu et le niveau avant de commencer
+    lieu_scenario = st.text_input("Lieu du scénario (ex: Chartres centre, Lucé, Barjouville)", placeholder="Où l'action se passe-t-elle ?")
+    niveau_formation = st.selectbox("Niveau de formation", 
+                                   ["CAP EPC", "Bac Pro Maintenance Véhicule", "BTS MV", "BP Boulanger", "BP Boucher", "BP Coiffure", "BM Boulanger", "AMLHR"])
+    sujet_cours = st.text_input("Notion du référentiel à traiter", placeholder="Ex: La gestion du poste client")
+    
+    valider = st.button("🚀 Générer la formation")
+
+if valider:
+    if not lieu_scenario or not sujet_cours:
+        st.warning("🚨 Manu, tu dois préciser le lieu et le sujet pour garantir l'immersion !")
+    else:
+        with st.spinner("Certification des données et scénarisation en cours..."):
+            prompt = f"""
+            Tu es l'expert pédagogique de Chalkie IA. Crée un cours d'une heure pour un apprenti en {niveau_formation}.
+            Lieu : {lieu_scenario}.
+            Sujet : {sujet_cours}.
+            
+            CONSIGNES :
+            1. Ton ludique, humour (jeux de mots obligatoires), pas académique.
+            2. Scénario localisé précisément à {lieu_scenario}.
+            3. Respect strict du référentiel {niveau_formation}.
+            4. Structure : 3 Missions, 1 Exercice, 1 Synthèse.
+            5. Pour chaque slide, suggère un visuel (photo ou dessin style cartoon).
+            6. Auto-critique : Vérifie que les calculs et la logique sont 100% exacts.
+            
+            Réponds EXCLUSIVEMENT en format JSON :
+            {{
+                "titre": "...", "niveau": "{niveau_formation}", "lieu": "{lieu_scenario}",
+                "missions": [
+                    {{"titre": "Mission 1", "contenu": "...", "visuel_suggere": "Dessin cartoon de..."}},
+                    ...
+                ],
+                "synthese": "..."
+            }}
+            """
+            
+            response = model.generate_content(prompt)
+            try:
+                # Nettoyage du JSON
+                cleaned_json = response.text.strip().replace('```json', '').replace('```', '')
+                data = json.loads(cleaned_json)
+                
+                st.success("✅ Formation certifiée exacte et prête !")
+                st.header(data['titre'])
+                
+                for m in data['missions']:
+                    with st.expander(m['titre']):
+                        st.write(m['contenu'])
+                        st.caption(f"🎨 Idée visuelle : {m['visuel_suggere']}")
+                
+                st.divider()
+                st.subheader("📝 Synthèse pour les apprentis")
+                st.info(data['synthese'])
+                
+                # Téléchargement PPTX
+                ppt_file = generate_pptx(data)
+                st.download_button(label="📥 Télécharger le PowerPoint", 
+                                   data=ppt_file, 
+                                   file_name=f"ChalkieIA_{sujet_cours.replace(' ', '_')}.pptx",
+                                   mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+                
+            except Exception as e:
+                st.error(f"Erreur de structure de données : {e}")
