@@ -1,123 +1,112 @@
 import streamlit as st
 import google.generativeai as genai
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from io import BytesIO
 import json
+import random
+import re
+from fpdf import FPDF
 
-# --- CONFIGURATION CHALKIE IA ---
-st.set_page_config(page_title="Chalkie IA - Expert Pédagogique", layout="wide")
+# --- CONFIGURATION EXPERTE ---
+st.set_page_config(page_title="EduForge Pro V21.1", layout="wide", page_icon="⚡")
+genai.configure(api_key=st.secrets["API_KEY"])
 
-# Récupération de la clé API via les secrets Streamlit ou un fichier local
-try:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-except:
-    st.error("⚠️ Clé API Google manquante. Configurez-la dans vos secrets.")
+# --- FONCTIONS DE NETTOYAGE (ANTI-CRASH) ---
+def nettoyer_json(texte_brut):
+    """Enlève les balises markdown parasites (```json ...) de l'IA."""
+    texte = texte_brut.strip()
+    if texte.startswith("```json"):
+        texte = texte.replace("```json", "", 1)
+    if texte.endswith("```"):
+        # Enlève le dernier ``` en partant de la fin
+        texte = "".join(texte.rsplit("```", 1))
+    return texte.strip()
 
-model = genai.GenerativeModel('gemini-1.5-flash')
+def nettoyer_pour_pdf(texte):
+    """Nettoie les caractères complexes (émojis, etc.) pour éviter le crash FPDF."""
+    if not texte: return ""
+    # Remplacement des caractères courants qui font planter FPDF
+    texte_propre = str(texte).replace('’', "'").replace('œ', 'oe').replace('€', 'Euros')
+    # On force l'encodage en latin-1 (ignorera les émojis)
+    return texte_propre.encode('latin-1', 'ignore').decode('latin-1')
 
-def generate_pptx(data):
-    """Génère une présentation PowerPoint certifiée Chalkie IA."""
-    prs = Presentation()
+# --- FONCTION D'EXPORTATION PDF ---
+def generer_pdf(data):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    titre_propre = nettoyer_pour_pdf(f"Support Apprenti : {data['sujet']}")
+    pdf.cell(200, 10, txt=titre_propre, ln=True, align='C')
+    pdf.set_font("Arial", size=12)
+    pdf.ln(10)
     
-    # Slide de Titre
-    title_slide_layout = prs.slide_layouts[0]
-    slide = prs.slides.add_slide(title_slide_layout)
-    slide.shapes.title.text = data['titre']
-    slide.placeholders[1].text = f"Niveau : {data['niveau']}\nLieu : {data['lieu']}"
+    ref_propre = nettoyer_pour_pdf(f"Diplome : {data['diplome']} | Referentiel : {data.get('meta', {}).get('referentiel_code', '')}")
+    pdf.multi_cell(0, 10, txt=ref_propre)
+    pdf.ln(5)
+    
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(200, 10, txt="1. Mission Professionnelle", ln=True)
+    pdf.set_font("Arial", size=11)
+    
+    enonce_propre = nettoyer_pour_pdf(data.get('mission_technique', {}).get('enonce', ''))
+    pdf.multi_cell(0, 8, txt=enonce_propre)
+    return pdf.output(dest='S').encode('latin-1')
 
-    # Missions
-    for mission in data['missions']:
-        slide_layout = prs.slide_layouts[1]
-        slide = prs.slides.add_slide(slide_layout)
-        slide.shapes.title.text = mission['titre']
-        
-        body_shape = slide.placeholders[1]
-        tf = body_shape.text_frame
-        tf.text = mission['contenu']
-        
-        # Note pour l'illustration (Style Cartoon / Photo)
-        p = tf.add_paragraph()
-        p.text = f"\n[Illustration : {mission['visuel_suggere']}]"
-        p.font.italic = True
-        p.font.size = Pt(14)
+# --- MOTEUR DE GÉNÉRATION V21.1 ---
+def generer_module_v21(diplome, sujet, lieu, niveau_bloom):
+    moteur = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods][0]
+    model = genai.GenerativeModel(moteur, generation_config={"response_mime_type": "application/json"})
+    
+    prompt = f"""
+    Agis en expert ingénieur pédagogique. Crée un module pour {diplome} sur {sujet} à {lieu}.
+    Niveau de difficulté (Taxonomie de Bloom) : {niveau_bloom}. Ne mets aucun émoji.
+    
+    STRUCTURE JSON :
+    {{
+        "meta": {{"referentiel_code": "...", "temps_estime": "60 min"}},
+        "intro": {{"scenario": "Scénario local à Chartres sans émojis"}},
+        "mission_technique": {{"enonce": "...", "etapes": "...", "complexite": "{niveau_bloom}"}},
+        "evaluation": {{"qcm": [], "vrai_faux": []}},
+        "autonomie": {{"activite": "..."}},
+        "formateur": {{"critique_pedagogique": "..."}}
+    }}
+    """
+    reponse = model.generate_content(prompt)
+    texte_nettoye = nettoyer_json(reponse.text)
+    return json.loads(texte_nettoye)
 
-    # Synthèse
-    slide = prs.slides.add_slide(prs.slide_layouts[1])
-    slide.shapes.title.text = "L'essentiel à retenir"
-    slide.placeholders[1].text = data['synthese']
-
-    binary_output = BytesIO()
-    prs.save(binary_output)
-    return binary_output.getvalue()
-
-# --- INTERFACE UTILISATEUR ---
-st.title("🎓 Chalkie IA : L'application des Apprentis")
-st.write("Bienvenue dans le moteur de création pédagogique du CFA Interpro de Chartres.")
+# --- INTERFACE ---
+st.title("⚡ EduForge Pro V21.1 : Patch Sécurité")
 
 with st.sidebar:
-    st.header("📍 Paramètres Obligatoires")
-    # Respect de l'exigence : Demander le lieu et le niveau avant de commencer
-    lieu_scenario = st.text_input("Lieu du scénario (ex: Chartres centre, Lucé, Barjouville)", placeholder="Où l'action se passe-t-elle ?")
-    niveau_formation = st.selectbox("Niveau de formation", 
-                                   ["CAP EPC", "Bac Pro Maintenance Véhicule", "BTS MV", "BP Boulanger", "BP Boucher", "BP Coiffure", "BM Boulanger", "AMLHR"])
-    sujet_cours = st.text_input("Notion du référentiel à traiter", placeholder="Ex: La gestion du poste client")
-    
-    valider = st.button("🚀 Générer la formation")
+    st.header("⚙️ Configuration")
+    diplome = st.selectbox("Diplôme :", ["BP Boulanger", "Bac Pro Maintenance Véhicule", "BTS Maintenance Véhicule", "CAP EPC"])
+    sujet = st.text_input("Sujet :", value="Gestion de l'injection")
+    lieu = st.text_input("Lieu :", value="Champhol")
+    niveau_bloom = st.select_slider("Objectif Cognitif (Bloom) :", 
+                                    options=["Comprendre", "Appliquer", "Analyser", "Évaluer"])
+    lancer = st.button("🚀 Forger le Module", use_container_width=True)
 
-if valider:
-    if not lieu_scenario or not sujet_cours:
-        st.warning("🚨 Manu, tu dois préciser le lieu et le sujet pour garantir l'immersion !")
-    else:
-        with st.spinner("Certification des données et scénarisation en cours..."):
-            prompt = f"""
-            Tu es l'expert pédagogique de Chalkie IA. Crée un cours d'une heure pour un apprenti en {niveau_formation}.
-            Lieu : {lieu_scenario}.
-            Sujet : {sujet_cours}.
-            
-            CONSIGNES :
-            1. Ton ludique, humour (jeux de mots obligatoires), pas académique.
-            2. Scénario localisé précisément à {lieu_scenario}.
-            3. Respect strict du référentiel {niveau_formation}.
-            4. Structure : 3 Missions, 1 Exercice, 1 Synthèse.
-            5. Pour chaque slide, suggère un visuel (photo ou dessin style cartoon).
-            6. Auto-critique : Vérifie que les calculs et la logique sont 100% exacts.
-            
-            Réponds EXCLUSIVEMENT en format JSON :
-            {{
-                "titre": "...", "niveau": "{niveau_formation}", "lieu": "{lieu_scenario}",
-                "missions": [
-                    {{"titre": "Mission 1", "contenu": "...", "visuel_suggere": "Dessin cartoon de..."}},
-                    ...
-                ],
-                "synthese": "..."
-            }}
-            """
-            
-            response = model.generate_content(prompt)
-            try:
-                # Nettoyage du JSON
-                cleaned_json = response.text.strip().replace('```json', '').replace('```', '')
-                data = json.loads(cleaned_json)
+if lancer and sujet:
+    with st.spinner("Forgeage pédagogique (avec filtres anti-crash) en cours..."):
+        try:
+            data = generer_module_v21(diplome, sujet, lieu, niveau_bloom)
+            data['sujet'] = sujet
+            data['diplome'] = diplome
+
+            tabs = st.tabs(["📖 Support Apprenti", "🖥️ Mode Live", "👨‍🏫 Expertise Formateur"])
+
+            with tabs[0]:
+                st.markdown(f"### {sujet} (Niveau : {niveau_bloom})")
+                st.write(data.get('mission_technique', {}).get('enonce', 'Aucun énoncé généré.'))
+                try:
+                    pdf_bytes = generer_pdf(data)
+                    st.download_button("📥 Télécharger le PDF Apprenti", pdf_bytes, f"Cours_{sujet}.pdf", "application/pdf")
+                except Exception as e_pdf:
+                    st.warning(f"Le module PDF a rencontré une anomalie de formatage : {str(e_pdf)}")
+
+            with tabs[2]:
+                st.markdown("### 🧠 Analyse de l'Expert")
+                st.info(data.get('formateur', {}).get('critique_pedagogique', 'Analyse manquante.'))
                 
-                st.success("✅ Formation certifiée exacte et prête !")
-                st.header(data['titre'])
-                
-                for m in data['missions']:
-                    with st.expander(m['titre']):
-                        st.write(m['contenu'])
-                        st.caption(f"🎨 Idée visuelle : {m['visuel_suggere']}")
-                
-                st.divider()
-                st.subheader("📝 Synthèse pour les apprentis")
-                st.info(data['synthese'])
-                
-                # Téléchargement PPTX
-                ppt_file = generate_pptx(data)
-                st.download_button(label="📥 Télécharger le PowerPoint", 
-                                   data=ppt_file, 
-                                   file_name=f"ChalkieIA_{sujet_cours.replace(' ', '_')}.pptx",
-                                   mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
-                
-            except Exception as e:
-                st.error(f"Erreur de structure de données : {e}")
+        except Exception as e:
+            st.error("🚨 Le moteur a rencontré un problème lors de l'injection des données.")
+            st.code(f"Détails de l'erreur technique : {str(e)}")
