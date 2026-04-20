@@ -3,110 +3,157 @@ import google.generativeai as genai
 import json
 import random
 import re
+import unicodedata
 from fpdf import FPDF
 
 # --- CONFIGURATION EXPERTE ---
-st.set_page_config(page_title="EduForge Pro V21.1", layout="wide", page_icon="⚡")
-genai.configure(api_key=st.secrets["API_KEY"])
+st.set_page_config(page_title="EduForge Pro V22", layout="wide", page_icon="🛡️")
 
-# --- FONCTIONS DE NETTOYAGE (ANTI-CRASH) ---
-def nettoyer_json(texte_brut):
-    """Enlève les balises markdown parasites (```json ...) de l'IA."""
-    texte = texte_brut.strip()
-    if texte.startswith("```json"):
-        texte = texte.replace("```json", "", 1)
-    if texte.endswith("```"):
-        # Enlève le dernier ``` en partant de la fin
-        texte = "".join(texte.rsplit("```", 1))
-    return texte.strip()
+# Gestion sécurisée de la clé API
+try:
+    genai.configure(api_key=st.secrets["API_KEY"])
+except Exception as e:
+    st.error("🚨 Clé API introuvable. Veuillez vérifier vos secrets Streamlit.")
+    st.stop()
 
-def nettoyer_pour_pdf(texte):
-    """Nettoie les caractères complexes (émojis, etc.) pour éviter le crash FPDF."""
+# --- FONCTIONS DE SÉCURITÉ (BLINDAGE ANTI-CRASH) ---
+def extraire_json_securise(texte_brut):
+    """Extrait chirurgicalement le JSON même si l'IA bavarde autour."""
+    try:
+        # Cherche tout ce qui ressemble à un objet JSON du premier { au dernier }
+        match = re.search(r'\{.*\}', texte_brut, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        else:
+            raise ValueError("Aucun bloc JSON détecté dans la réponse.")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Le format JSON généré est corrompu : {str(e)}")
+
+def desinfecter_texte_pdf(texte):
+    """Supprime tous les caractères spéciaux, accents et émojis pour FPDF."""
     if not texte: return ""
-    # Remplacement des caractères courants qui font planter FPDF
-    texte_propre = str(texte).replace('’', "'").replace('œ', 'oe').replace('€', 'Euros')
-    # On force l'encodage en latin-1 (ignorera les émojis)
-    return texte_propre.encode('latin-1', 'ignore').decode('latin-1')
+    texte_str = str(texte)
+    # Normalise et supprime les accents/émojis pour garantir la compatibilité latin-1
+    texte_propre = unicodedata.normalize('NFD', texte_str).encode('ascii', 'ignore').decode('utf-8')
+    return texte_propre
 
-# --- FONCTION D'EXPORTATION PDF ---
-def generer_pdf(data):
+# --- FONCTION D'EXPORTATION PDF (SÉCURISÉE) ---
+def generer_pdf_robuste(data):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    titre_propre = nettoyer_pour_pdf(f"Support Apprenti : {data['sujet']}")
-    pdf.cell(200, 10, txt=titre_propre, ln=True, align='C')
+    
+    titre = desinfecter_texte_pdf(f"Support Apprenti : {data.get('sujet', 'Sujet inconnu')}")
+    pdf.cell(200, 10, txt=titre, ln=True, align='C')
+    
     pdf.set_font("Arial", size=12)
     pdf.ln(10)
     
-    ref_propre = nettoyer_pour_pdf(f"Diplome : {data['diplome']} | Referentiel : {data.get('meta', {}).get('referentiel_code', '')}")
-    pdf.multi_cell(0, 10, txt=ref_propre)
+    diplome = desinfecter_texte_pdf(data.get('diplome', ''))
+    ref = desinfecter_texte_pdf(data.get('meta', {}).get('referentiel_code', 'Non defini'))
+    pdf.multi_cell(0, 10, txt=f"Diplome : {diplome} | Referentiel : {ref}")
     pdf.ln(5)
     
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(200, 10, txt="1. Mission Professionnelle", ln=True)
     pdf.set_font("Arial", size=11)
     
-    enonce_propre = nettoyer_pour_pdf(data.get('mission_technique', {}).get('enonce', ''))
-    pdf.multi_cell(0, 8, txt=enonce_propre)
-    return pdf.output(dest='S').encode('latin-1')
+    enonce = desinfecter_texte_pdf(data.get('mission_technique', {}).get('enonce', ''))
+    pdf.multi_cell(0, 8, txt=enonce)
+    
+    # On gère l'erreur d'encodage au moment de la création du fichier
+    try:
+        return pdf.output(dest='S').encode('latin-1')
+    except Exception as e:
+        raise ValueError(f"Erreur d'encodage PDF : {str(e)}")
 
-# --- MOTEUR DE GÉNÉRATION V21.1 ---
-def generer_module_v21(diplome, sujet, lieu, niveau_bloom):
+# --- MOTEUR DE GÉNÉRATION V22 ---
+def generer_module_indestructible(diplome, sujet, lieu, niveau_bloom):
     moteur = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods][0]
-    model = genai.GenerativeModel(moteur, generation_config={"response_mime_type": "application/json"})
+    # On retire le paramètre mime_type strict qui provoque des crashs internes chez Google
+    model = genai.GenerativeModel(moteur)
     
     prompt = f"""
-    Agis en expert ingénieur pédagogique. Crée un module pour {diplome} sur {sujet} à {lieu}.
-    Niveau de difficulté (Taxonomie de Bloom) : {niveau_bloom}. Ne mets aucun émoji.
+    Agis en expert ingénieur pédagogique du CFA de Chartres. Crée un module pour {diplome} sur le sujet : {sujet}.
+    Lieu du scénario : {lieu}. 
+    Niveau de difficulté (Taxonomie de Bloom) : {niveau_bloom}. 
     
-    STRUCTURE JSON :
+    REGLE ABSOLUE : Tu ne dois générer AUCUN texte, AUCUN markdown, AUCUN émoji. 
+    Tu dois répondre UNIQUEMENT par cet objet JSON brut et valide :
+    
     {{
-        "meta": {{"referentiel_code": "...", "temps_estime": "60 min"}},
-        "intro": {{"scenario": "Scénario local à Chartres sans émojis"}},
-        "mission_technique": {{"enonce": "...", "etapes": "...", "complexite": "{niveau_bloom}"}},
-        "evaluation": {{"qcm": [], "vrai_faux": []}},
-        "autonomie": {{"activite": "..."}},
-        "formateur": {{"critique_pedagogique": "..."}}
+        "meta": {{"referentiel_code": "Ex: C2.1", "temps_estime": "60 min"}},
+        "intro": {{"scenario": "Scenario humoristique a Chartres"}},
+        "mission_technique": {{"enonce": "Description du defi", "etapes": "Solution detaillee", "complexite": "{niveau_bloom}"}},
+        "evaluation": {{"vrai_faux": [{{"text": "Affirmation 1", "val": true, "expl": "Correction"}}]}},
+        "autonomie": {{"activite": "Travail de 60 min"}},
+        "formateur": {{"critique_pedagogique": "Pourquoi cet exercice est adapte au niveau demande"}}
     }}
     """
     reponse = model.generate_content(prompt)
-    texte_nettoye = nettoyer_json(reponse.text)
-    return json.loads(texte_nettoye)
+    return extraire_json_securise(reponse.text)
 
 # --- INTERFACE ---
-st.title("⚡ EduForge Pro V21.1 : Patch Sécurité")
+st.title("🛡️ EduForge Pro V22 : Moteur Blindé")
+st.markdown("Système de génération haute disponibilité pour le CFA de Chartres.")
 
 with st.sidebar:
     st.header("⚙️ Configuration")
-    diplome = st.selectbox("Diplôme :", ["BP Boulanger", "Bac Pro Maintenance Véhicule", "BTS Maintenance Véhicule", "CAP EPC"])
-    sujet = st.text_input("Sujet :", value="Gestion de l'injection")
-    lieu = st.text_input("Lieu :", value="Champhol")
+    diplome = st.selectbox("Diplôme :", ["BP Boulanger", "Bac Pro Maintenance Véhicule", "BTS Maintenance Véhicule", "CAP EPC", "BP Boucher"])
+    sujet = st.text_input("Sujet technique :", value="La gestion des stocks")
+    lieu = st.text_input("Lieu :", value="Chartres")
     niveau_bloom = st.select_slider("Objectif Cognitif (Bloom) :", 
                                     options=["Comprendre", "Appliquer", "Analyser", "Évaluer"])
     lancer = st.button("🚀 Forger le Module", use_container_width=True)
 
 if lancer and sujet:
-    with st.spinner("Forgeage pédagogique (avec filtres anti-crash) en cours..."):
+    with st.spinner("Fabrication du module (avec protections anti-crash activées)..."):
         try:
-            data = generer_module_v21(diplome, sujet, lieu, niveau_bloom)
+            # 1. Génération
+            data = generer_module_indestructible(diplome, sujet, lieu, niveau_bloom)
             data['sujet'] = sujet
             data['diplome'] = diplome
 
+            # 2. Affichage
             tabs = st.tabs(["📖 Support Apprenti", "🖥️ Mode Live", "👨‍🏫 Expertise Formateur"])
 
             with tabs[0]:
-                st.markdown(f"### {sujet} (Niveau : {niveau_bloom})")
-                st.write(data.get('mission_technique', {}).get('enonce', 'Aucun énoncé généré.'))
+                st.markdown(f"### 🎯 Mission : {sujet} ({niveau_bloom})")
+                st.write(data.get('mission_technique', {}).get('enonce', 'Données manquantes.'))
+                
+                # Bloc PDF Sécurisé
                 try:
-                    pdf_bytes = generer_pdf(data)
-                    st.download_button("📥 Télécharger le PDF Apprenti", pdf_bytes, f"Cours_{sujet}.pdf", "application/pdf")
+                    pdf_bytes = generer_pdf_robuste(data)
+                    st.download_button(
+                        label="📥 Télécharger le PDF Apprenti", 
+                        data=pdf_bytes, 
+                        file_name=f"Cours_{sujet.replace(' ', '_')}.pdf", 
+                        mime="application/pdf"
+                    )
                 except Exception as e_pdf:
-                    st.warning(f"Le module PDF a rencontré une anomalie de formatage : {str(e_pdf)}")
+                    st.error(f"Impossible de générer le PDF : {e_pdf}")
+
+            with tabs[1]:
+                st.info("Mode projection pour le tableau.")
+                st.markdown(f"### {data.get('intro', {}).get('scenario', 'Scénario en cours...')}")
+                st.divider()
+                st.markdown("### Évaluation Interactive")
+                vf_list = data.get('evaluation', {}).get('vrai_faux', [])
+                for i, vf in enumerate(vf_list):
+                    st.write(f"**Q{i+1}:** {vf.get('text', '')}")
+                    with st.expander("Correction"):
+                        if vf.get('val'):
+                            st.success(f"VRAI : {vf.get('expl', '')}")
+                        else:
+                            st.error(f"FAUX : {vf.get('expl', '')}")
 
             with tabs[2]:
                 st.markdown("### 🧠 Analyse de l'Expert")
-                st.info(data.get('formateur', {}).get('critique_pedagogique', 'Analyse manquante.'))
+                st.info(data.get('formateur', {}).get('critique_pedagogique', 'Analyse non disponible.'))
                 
+        except ValueError as ve:
+            st.error("🚨 Le moteur d'intelligence artificielle a dérapé.")
+            st.code(str(ve))
         except Exception as e:
-            st.error("🚨 Le moteur a rencontré un problème lors de l'injection des données.")
-            st.code(f"Détails de l'erreur technique : {str(e)}")
+            st.error("🚨 Une erreur système inattendue est survenue.")
+            st.code(str(e))
