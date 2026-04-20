@@ -1,13 +1,8 @@
 import streamlit as st
 import google.generativeai as genai
-import json
-import random
-import re
-import unicodedata
-from fpdf import FPDF
 
 # --- CONFIGURATION EXPERTE ---
-st.set_page_config(page_title="EduForge Pro V22", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="GNrateur contenu éducatif", layout="wide", page_icon="📝")
 
 # Gestion sécurisée de la clé API
 try:
@@ -16,144 +11,107 @@ except Exception as e:
     st.error("🚨 Clé API introuvable. Veuillez vérifier vos secrets Streamlit.")
     st.stop()
 
-# --- FONCTIONS DE SÉCURITÉ (BLINDAGE ANTI-CRASH) ---
-def extraire_json_securise(texte_brut):
-    """Extrait chirurgicalement le JSON même si l'IA bavarde autour."""
-    try:
-        # Cherche tout ce qui ressemble à un objet JSON du premier { au dernier }
-        match = re.search(r'\{.*\}', texte_brut, re.DOTALL)
-        if match:
-            return json.loads(match.group(0))
-        else:
-            raise ValueError("Aucun bloc JSON détecté dans la réponse.")
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Le format JSON généré est corrompu : {str(e)}")
-
-def desinfecter_texte_pdf(texte):
-    """Supprime tous les caractères spéciaux, accents et émojis pour FPDF."""
-    if not texte: return ""
-    texte_str = str(texte)
-    # Normalise et supprime les accents/émojis pour garantir la compatibilité latin-1
-    texte_propre = unicodedata.normalize('NFD', texte_str).encode('ascii', 'ignore').decode('utf-8')
-    return texte_propre
-
-# --- FONCTION D'EXPORTATION PDF (SÉCURISÉE) ---
-def generer_pdf_robuste(data):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    
-    titre = desinfecter_texte_pdf(f"Support Apprenti : {data.get('sujet', 'Sujet inconnu')}")
-    pdf.cell(200, 10, txt=titre, ln=True, align='C')
-    
-    pdf.set_font("Arial", size=12)
-    pdf.ln(10)
-    
-    diplome = desinfecter_texte_pdf(data.get('diplome', ''))
-    ref = desinfecter_texte_pdf(data.get('meta', {}).get('referentiel_code', 'Non defini'))
-    pdf.multi_cell(0, 10, txt=f"Diplome : {diplome} | Referentiel : {ref}")
-    pdf.ln(5)
-    
-    pdf.set_font("Arial", 'B', 14)
-    pdf.cell(200, 10, txt="1. Mission Professionnelle", ln=True)
-    pdf.set_font("Arial", size=11)
-    
-    enonce = desinfecter_texte_pdf(data.get('mission_technique', {}).get('enonce', ''))
-    pdf.multi_cell(0, 8, txt=enonce)
-    
-    # On gère l'erreur d'encodage au moment de la création du fichier
-    try:
-        return pdf.output(dest='S').encode('latin-1')
-    except Exception as e:
-        raise ValueError(f"Erreur d'encodage PDF : {str(e)}")
-
-# --- MOTEUR DE GÉNÉRATION V22 ---
-def generer_module_indestructible(diplome, sujet, lieu, niveau_bloom):
+# --- MOTEUR DE GÉNÉRATION ROBUSTE (TEXTE STRUCTURÉ) ---
+def generer_cours_complet(formation, sujet, localisation):
+    """
+    Génère un cours complet en Markdown. 
+    L'avantage du Markdown est qu'il ne plante JAMAIS (contrairement au JSON) 
+    et se copie/colle parfaitement dans Word.
+    """
     moteur = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods][0]
-    # On retire le paramètre mime_type strict qui provoque des crashs internes chez Google
     model = genai.GenerativeModel(moteur)
     
     prompt = f"""
-    Agis en expert ingénieur pédagogique du CFA de Chartres. Crée un module pour {diplome} sur le sujet : {sujet}.
-    Lieu du scénario : {lieu}. 
-    Niveau de difficulté (Taxonomie de Bloom) : {niveau_bloom}. 
+    Agis en tant que meilleur expert ingénieur pédagogique. Tu dois rédiger un document de cours "clef en main" pour des apprentis.
     
-    REGLE ABSOLUE : Tu ne dois générer AUCUN texte, AUCUN markdown, AUCUN émoji. 
-    Tu dois répondre UNIQUEMENT par cet objet JSON brut et valide :
+    PARAMÈTRES :
+    - Formation visée : {formation}
+    - Sujet du cours : {sujet}
+    - Localisation du scénario : {localisation}
     
-    {{
-        "meta": {{"referentiel_code": "Ex: C2.1", "temps_estime": "60 min"}},
-        "intro": {{"scenario": "Scenario humoristique a Chartres"}},
-        "mission_technique": {{"enonce": "Description du defi", "etapes": "Solution detaillee", "complexite": "{niveau_bloom}"}},
-        "evaluation": {{"vrai_faux": [{{"text": "Affirmation 1", "val": true, "expl": "Correction"}}]}},
-        "autonomie": {{"activite": "Travail de 60 min"}},
-        "formateur": {{"critique_pedagogique": "Pourquoi cet exercice est adapte au niveau demande"}}
-    }}
+    CONSIGNES STRICTES D'EXCELLENCE :
+    1. Le ton doit être ludique, avec une pointe d'humour et des jeux de mots.
+    2. Ne cite JAMAIS le prénom "Manu" dans le cours.
+    3. Inclus des descriptions visuelles pour illustrer le cours (ex: [Image d'un apprenti en cartoon qui...]).
+    4. La correction de TOUTES les activités doit IMPÉRATIVEMENT se trouver dans une section isolée, tout à la fin du document.
+    5. Sois exigeant sur le vocabulaire technique adapté au niveau de la formation.
+    
+    STRUCTURE OBLIGATOIRE DU DOCUMENT :
+    
+    # 🎓 Cours : {sujet}
+    **Formation :** {formation} | **Lieu du scénario :** {localisation}
+    
+    ## 🎯 Référentiel visé (Compétences et Savoirs)
+    [Détaille ici de manière exacte et certifiée les codes (ex: C1.2, S3) et les descriptions des compétences du référentiel officiel concernées par cette leçon.]
+    
+    ## 🎬 Scénario Pédagogique
+    [Une accroche ludique ancrée géographiquement. Ajoute une description d'image style cartoon.]
+    
+    ## 📖 Notions Clés & Mission
+    [Le cœur du cours, clair, structuré, prêt à être lu par les apprentis.]
+    
+    ## 🧠 Activités Pédagogiques
+    
+    ### A. QCM
+    [3 questions pointues avec choix multiples A, B, C]
+    
+    ### B. Vrai ou Faux
+    [3 affirmations techniques à valider]
+    
+    ### C. Jeu d'associations
+    [Mélange 4 mots techniques de la leçon avec 4 définitions. L'apprenti doit les relier.]
+    
+    ---
+    
+    ## 👨‍🏫 ESPACE FORMATEUR (CORRECTIONS)
+    [Cette section est pour le formateur. Donne les corrections exactes et auto-critiquées du QCM, du Vrai/Faux, et du jeu d'associations. Justifie les réponses.]
     """
+    
     reponse = model.generate_content(prompt)
-    return extraire_json_securise(reponse.text)
+    return reponse.text
 
-# --- INTERFACE ---
-st.title("🛡️ EduForge Pro V22 : Moteur Blindé")
-st.markdown("Système de génération haute disponibilité pour le CFA de Chartres.")
+# --- INTERFACE UTILISATEUR ---
+st.title("📝 GNrateur contenu éducatif")
+st.markdown("L'outil d'ingénierie pédagogique infaillible du CFA. Générez des documents structurés, conformes et prêts à imprimer.")
 
 with st.sidebar:
-    st.header("⚙️ Configuration")
-    diplome = st.selectbox("Diplôme :", ["BP Boulanger", "Bac Pro Maintenance Véhicule", "BTS Maintenance Véhicule", "CAP EPC", "BP Boucher"])
-    sujet = st.text_input("Sujet technique :", value="La gestion des stocks")
-    lieu = st.text_input("Lieu :", value="Chartres")
-    niveau_bloom = st.select_slider("Objectif Cognitif (Bloom) :", 
-                                    options=["Comprendre", "Appliquer", "Analyser", "Évaluer"])
-    lancer = st.button("🚀 Forger le Module", use_container_width=True)
+    st.header("⚙️ Paramètres de la session")
+    formation = st.selectbox(
+        "Formation concernée :", 
+        [
+            "Bac Pro Maintenance Véhicule (2de)", "Bac Pro Maintenance Véhicule (1re)", "Bac Pro Maintenance Véhicule (Term)",
+            "BTS Maintenance Véhicule", "Carrossier/Peintre",
+            "BP Boulanger", "BM Boulanger", "BP Boucher", 
+            "CAP Équipier Polyvalent du Commerce (EPC)", 
+            "BP Coiffure", "AMLHR (Hôtellerie-Restauration)"
+        ]
+    )
+    sujet = st.text_input("Sujet du cours :", placeholder="Ex: L'allumage électronique, Le pétrissage...")
+    localisation = st.text_input("Localisation :", value="Chartres / Champhol")
+    lancer = st.button("🚀 Générer le Document", use_container_width=True)
 
 if lancer and sujet:
-    with st.spinner("Fabrication du module (avec protections anti-crash activées)..."):
+    with st.spinner("Rédaction du document clef en main (Processus blindé en cours)..."):
         try:
-            # 1. Génération
-            data = generer_module_indestructible(diplome, sujet, lieu, niveau_bloom)
-            data['sujet'] = sujet
-            data['diplome'] = diplome
-
-            # 2. Affichage
-            tabs = st.tabs(["📖 Support Apprenti", "🖥️ Mode Live", "👨‍🏫 Expertise Formateur"])
-
-            with tabs[0]:
-                st.markdown(f"### 🎯 Mission : {sujet} ({niveau_bloom})")
-                st.write(data.get('mission_technique', {}).get('enonce', 'Données manquantes.'))
+            # 1. Génération du contenu brut
+            document_cours = generer_cours_complet(formation, sujet, localisation)
+            
+            st.success("✅ Document généré avec succès ! Aucun crash détecté.")
+            
+            # 2. Bouton de téléchargement robuste
+            st.download_button(
+                label="📥 Télécharger le Document (Format Texte)", 
+                data=document_cours, 
+                file_name=f"Cours_{formation.replace(' ', '_')}_{sujet.replace(' ', '_')}.txt", 
+                mime="text/plain"
+            )
+            
+            st.info("💡 Astuce : Vous pouvez cliquer sur 'Télécharger', ou simplement copier/coller le texte ci-dessous directement dans Word. Word conservera la mise en forme (Titres, gras, puces).")
+            st.divider()
+            
+            # 3. Affichage pleine page
+            st.markdown(document_cours)
                 
-                # Bloc PDF Sécurisé
-                try:
-                    pdf_bytes = generer_pdf_robuste(data)
-                    st.download_button(
-                        label="📥 Télécharger le PDF Apprenti", 
-                        data=pdf_bytes, 
-                        file_name=f"Cours_{sujet.replace(' ', '_')}.pdf", 
-                        mime="application/pdf"
-                    )
-                except Exception as e_pdf:
-                    st.error(f"Impossible de générer le PDF : {e_pdf}")
-
-            with tabs[1]:
-                st.info("Mode projection pour le tableau.")
-                st.markdown(f"### {data.get('intro', {}).get('scenario', 'Scénario en cours...')}")
-                st.divider()
-                st.markdown("### Évaluation Interactive")
-                vf_list = data.get('evaluation', {}).get('vrai_faux', [])
-                for i, vf in enumerate(vf_list):
-                    st.write(f"**Q{i+1}:** {vf.get('text', '')}")
-                    with st.expander("Correction"):
-                        if vf.get('val'):
-                            st.success(f"VRAI : {vf.get('expl', '')}")
-                        else:
-                            st.error(f"FAUX : {vf.get('expl', '')}")
-
-            with tabs[2]:
-                st.markdown("### 🧠 Analyse de l'Expert")
-                st.info(data.get('formateur', {}).get('critique_pedagogique', 'Analyse non disponible.'))
-                
-        except ValueError as ve:
-            st.error("🚨 Le moteur d'intelligence artificielle a dérapé.")
-            st.code(str(ve))
         except Exception as e:
-            st.error("🚨 Une erreur système inattendue est survenue.")
+            st.error("🚨 Une erreur système de connexion à l'IA est survenue.")
             st.code(str(e))
